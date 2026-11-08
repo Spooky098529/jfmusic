@@ -3,6 +3,9 @@
 
 1 24 "app.manifest"
 
+/* Jellyfin logo, CC BY-SA 4.0, see src/ICON-LICENSE.txt */
+IDI_APP ICON "app.ico"
+
 IDR_MENU MENU
 BEGIN
     POPUP "&File"

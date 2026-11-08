@@ -1,3 +1,4 @@
+#define IDI_APP         1       /* lowest icon ID: Explorer shows it for the exe */
 #define IDD_LOGIN       100
 #define IDC_SERVER      101
 #define IDC_USER        102

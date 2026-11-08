@@ -35,7 +35,7 @@ build/%.o: src/%.c src/jf.h src/ma_cfg.h | build
 build/ma_impl.o: src/ma_impl.c src/ma_cfg.h vendor/miniaudio.h | build
 	$(CC) $(CFLAGS) -w -c -o $@ $<
 
-build/app.res: src/app.rc src/resource.h src/app.manifest | build
+build/app.res: src/app.rc src/resource.h src/app.manifest src/app.ico | build
 	$(RC) /nologo /I src /I "$(SDKINC)/um" /I "$(SDKINC)/shared" /FO $@ src/app.rc
 
 build:

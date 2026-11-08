@@ -880,7 +880,9 @@ static void command(int id)
         break;
     case IDM_ABOUT:
         MessageBoxW(g_hwnd, APP_NAME L" " TEXT(APP_VERSION) L"\n\nA small Jellyfin music player.\n"
-                    L"Audio decoding by miniaudio (miniaud.io).", L"About", MB_OK | MB_ICONINFORMATION);
+                    L"Audio decoding by miniaudio (miniaud.io).\n"
+                    L"Icon: Jellyfin logo by the Jellyfin contributors, CC BY-SA 4.0.",
+                    L"About", MB_OK | MB_ICONINFORMATION);
         break;
     }
 }
@@ -1021,7 +1023,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     wc.cbSize = sizeof wc;
     wc.lpfnWndProc = wndproc;
     wc.hInstance = inst;
-    wc.hIcon = LoadIconW(NULL, IDI_APPLICATION);
+    /* Large icon for Alt+Tab, small (16 px at 96 dpi) for the title bar and tray. */
+    wc.hIcon = LoadImageW(inst, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON,
+                          GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0);
+    wc.hIconSm = LoadImageW(inst, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON,
+                            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
     wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpszMenuName = MAKEINTRESOURCEW(IDR_MENU);
