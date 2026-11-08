@@ -1,8 +1,9 @@
 /* Audio playback.
  *
  * Each track is a Stream shared by two threads:
- *   download thread  GETs /Audio/{id}/universal into a growing memory buffer
- *   decode thread    runs a miniaudio decoder over that buffer (reads block
+ *   download thread  GETs /Audio/{id}/universal into a temp file (not RAM:
+ *                    a FLAC track can be 50+ MB)
+ *   decode thread    runs a miniaudio decoder over that file (reads block
  *                    until the bytes have arrived) and pushes PCM into a FIFO
  * The device callback only copies from the FIFO, so a slow network gives
  * silence ("buffering"), never a stalled audio thread.
@@ -17,9 +18,9 @@ typedef struct Stream {
     volatile LONG refs, cancel;
     CRITICAL_SECTION cs;
     CONDITION_VARIABLE cv;
-    unsigned char *buf;
-    size_t len, cap;
-    long long total;            /* Content-Length, or -1 */
+    HANDLE file;                /* temp file holding the download */
+    size_t len;                 /* bytes written to it so far */
+    long long total;           /* Content-Length, or -1 */
     int hdr, done, failed;      /* headers known / download finished / failed */
     char ctype[64];
     char err[256];
@@ -48,7 +49,7 @@ static void stream_release(Stream *st)
 {
     if (InterlockedDecrement(&st->refs)) return;
     DeleteCriticalSection(&st->cs);
-    free(st->buf);
+    if (st->file != INVALID_HANDLE_VALUE) CloseHandle(st->file);    /* deletes it */
     free(st);
 }
 
@@ -195,10 +196,6 @@ static DWORD WINAPI dl_thread(LPVOID arg)
     EnterCriticalSection(&st->cs);
     snprintf(st->ctype, sizeof st->ctype, "%s", ctype);
     st->total = total;
-    if (total > 0 && total < ((long long)1 << 31)) {
-        st->buf = malloc((size_t)total);
-        st->cap = st->buf ? (size_t)total : 0;
-    }
     st->hdr = 1;
     WakeAllConditionVariable(&st->cv);
     LeaveCriticalSection(&st->cs);
@@ -213,16 +210,18 @@ static DWORD WINAPI dl_thread(LPVOID arg)
         if (avail > sizeof chunk) avail = sizeof chunk;
         if (!WinHttpReadData(hr, chunk, avail, &got)) { fail = "Connection to server lost"; break; }
         if (!got) break;
-        EnterCriticalSection(&st->cs);
-        if (st->len + got > st->cap) {
-            size_t nc = st->cap ? st->cap * 2 : (size_t)4 << 20;
-            while (nc < st->len + got) nc *= 2;
-            unsigned char *nb = realloc(st->buf, nc);
-            if (!nb) { LeaveCriticalSection(&st->cs); fail = "Out of memory"; break; }
-            st->buf = nb;
-            st->cap = nc;
+        /* Only this thread writes, and readers never look past st->len, so
+           the write itself needs no lock. */
+        OVERLAPPED ov;
+        memset(&ov, 0, sizeof ov);
+        ov.Offset = (DWORD)st->len;
+        ov.OffsetHigh = (DWORD)((unsigned long long)st->len >> 32);
+        DWORD wrote = 0;
+        if (!WriteFile(st->file, chunk, got, &wrote, &ov) || wrote != got) {
+            fail = "Could not write to the temp folder (disk full?)";
+            break;
         }
-        memcpy(st->buf + st->len, chunk, got);
+        EnterCriticalSection(&st->cs);
         st->len += got;
         WakeAllConditionVariable(&st->cv);
         LeaveCriticalSection(&st->cs);
@@ -254,10 +253,19 @@ static ma_result on_read(ma_decoder *d, void *out, size_t want, size_t *got)
     if (!st->cancel && st->rpos < st->len) {
         n = st->len - st->rpos;
         if (n > want) n = want;
-        memcpy(out, st->buf + st->rpos, n);
-        st->rpos += n;
     }
+    size_t at = st->rpos;
     LeaveCriticalSection(&st->cs);
+    if (n) {                    /* bytes below st->len are already written */
+        OVERLAPPED ov;
+        memset(&ov, 0, sizeof ov);
+        ov.Offset = (DWORD)at;
+        ov.OffsetHigh = (DWORD)((unsigned long long)at >> 32);
+        DWORD r = 0;
+        if (!ReadFile(st->file, out, (DWORD)n, &r, &ov)) r = 0;
+        n = r;
+        st->rpos = at + n;      /* rpos is only touched by the decode thread */
+    }
     *got = n;
     return n ? MA_SUCCESS : MA_AT_END;
 }
@@ -407,8 +415,25 @@ void player_play(const char *itemid)
         LeaveCriticalSection(&g_fcs);
         return;
     }
+    /* DELETE_ON_CLOSE: Windows removes it when the stream is freed, or when
+       the process exits, even after a crash. TEMPORARY: keep it in the file
+       cache rather than writing it out to disk if memory allows. */
+    WCHAR dir[MAX_PATH], name[MAX_PATH];
+    HANDLE f = INVALID_HANDLE_VALUE;
+    if (GetTempPathW(MAX_PATH, dir) && GetTempFileNameW(dir, L"jfm", 0, name))
+        f = CreateFileW(name, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE |
+                        FILE_SHARE_DELETE, NULL, CREATE_ALWAYS,
+                        FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+    if (f == INVALID_HANDLE_VALUE) {
+        player_stop();
+        EnterCriticalSection(&g_fcs);
+        snprintf(g_err, sizeof g_err, "Could not create a file in the temp folder");
+        LeaveCriticalSection(&g_fcs);
+        return;
+    }
     Stream *st = calloc(1, sizeof *st);
-    if (!st) return;
+    if (!st) { CloseHandle(f); return; }
+    st->file = f;
     st->refs = 3;                       /* player + two threads */
     st->total = -1;
     InitializeCriticalSection(&st->cs);
