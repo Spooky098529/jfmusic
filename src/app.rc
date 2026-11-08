@@ -1,0 +1,69 @@
+#include <windows.h>
+#include "resource.h"
+
+1 24 "app.manifest"
+
+IDR_MENU MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&Log in / change server...", IDM_LOGIN
+        MENUITEM "Log &out", IDM_LOGOUT
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit", IDM_EXIT
+    END
+    POPUP "&Playback"
+    BEGIN
+        MENUITEM "&Play / Pause", IDM_PLAYPAUSE
+        MENUITEM "&Stop", IDM_STOP
+        MENUITEM "&Next track", IDM_NEXT
+        MENUITEM "P&revious track", IDM_PREV
+        MENUITEM SEPARATOR
+        MENUITEM "&Find...\tCtrl+F", IDM_FIND
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About", IDM_ABOUT
+    END
+END
+
+IDD_LOGIN DIALOGEX 0, 0, 240, 118
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Connect to Jellyfin"
+FONT 8, "MS Shell Dlg 2"
+BEGIN
+    LTEXT           "&Server:", -1, 8, 10, 50, 8
+    EDITTEXT        IDC_SERVER, 62, 8, 170, 12, ES_AUTOHSCROLL
+    LTEXT           "e.g. http://192.168.1.10:8096", -1, 62, 22, 170, 8
+    LTEXT           "&Username:", -1, 8, 38, 50, 8
+    EDITTEXT        IDC_USER, 62, 36, 170, 12, ES_AUTOHSCROLL
+    LTEXT           "&Password:", -1, 8, 56, 50, 8
+    EDITTEXT        IDC_PASS, 62, 54, 170, 12, ES_AUTOHSCROLL | ES_PASSWORD
+    LTEXT           "", IDC_LOGINMSG, 8, 74, 224, 18
+    DEFPUSHBUTTON   "&Log in", IDOK, 128, 96, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 182, 96, 50, 14
+END
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     0,1,0,0
+PRODUCTVERSION  0,1,0,0
+FILEOS          0x40004
+FILETYPE        0x1
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "FileDescription", "Jellyfin Music"
+            VALUE "FileVersion", "0.1.0"
+            VALUE "InternalName", "jfmusic"
+            VALUE "OriginalFilename", "jfmusic.exe"
+            VALUE "ProductName", "jfmusic"
+            VALUE "ProductVersion", "0.1.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

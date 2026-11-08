@@ -1,0 +1,11 @@
+*.exe
+*.pdb
+*.res
+*.o
+*.zip
+config.mk
+xwin-sdk/
+xwin-cache/
+jfmusic.ini
+src/compile_flags.txt
+build/
