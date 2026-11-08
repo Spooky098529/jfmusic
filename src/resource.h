@@ -9,6 +9,8 @@
 #define IDM_LOGOUT      202
 #define IDM_EXIT        203
 #define IDM_FIND        204
+#define IDM_TRAY        205
+#define IDM_RESTORE     206
 #define IDM_PLAYPAUSE   210
 #define IDM_STOP        211
 #define IDM_NEXT        212

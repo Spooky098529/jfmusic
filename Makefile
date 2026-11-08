@@ -20,7 +20,7 @@ CFLAGS  = --target=x86_64-pc-windows-msvc -Xmicrosoft-windows-sys-root $(WINSYSR
           -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 -DUNICODE -D_UNICODE -D_CRT_SECURE_NO_WARNINGS
 LDFLAGS = -fuse-ld=lld --target=x86_64-pc-windows-msvc -Xmicrosoft-windows-sys-root $(WINSYSROOT) \
           -fms-runtime-lib=static -Xlinker /subsystem:windows,6.01 -Wl,/opt:ref
-LIBS    = -lwinhttp -lcomctl32 -luxtheme -luser32 -lgdi32 -lkernel32
+LIBS    = -lwinhttp -lcomctl32 -luxtheme -luser32 -lgdi32 -lshell32 -lkernel32
 RC      = llvm-rc
 
 OBJS    = build/main.o build/api.o build/json.o build/player.o build/ma_impl.o build/app.res

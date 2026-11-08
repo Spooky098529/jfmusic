@@ -10,6 +10,8 @@ BEGIN
         MENUITEM "&Log in / change server...", IDM_LOGIN
         MENUITEM "Log &out", IDM_LOGOUT
         MENUITEM SEPARATOR
+        MENUITEM "&Minimize to tray", IDM_TRAY
+        MENUITEM SEPARATOR
         MENUITEM "E&xit", IDM_EXIT
     END
     POPUP "&Playback"

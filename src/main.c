@@ -9,6 +9,7 @@
 #include "resource.h"
 #include <commctrl.h>
 #include <uxtheme.h>
+#include <shellapi.h>
 #include <stdarg.h>
 
 enum {
@@ -21,6 +22,8 @@ enum {
 #define HK_PREV 3
 #define HK_STOP 4
 #define PROGRESS_EVERY_MS 10000
+#define WM_APP_TRAY (WM_APP + 2)
+#define TRAY_ID 1
 
 static HINSTANCE g_inst;
 static HWND g_hwnd, g_search, g_searchbtn, g_lvart, g_lvalb, g_lvtrk;
@@ -42,7 +45,93 @@ static int g_seeking, g_last_state = -1, g_logging_in;
 static ULONGLONG g_last_progress;
 static WCHAR g_last_err[256];
 
+static int g_min_to_tray = 1, g_in_tray;
+static UINT g_taskbar_created;      /* Explorer restarted: re-add the icon */
+static WCHAR g_tip[128] = APP_NAME;
+
 static int S(int x) { return MulDiv(x, g_dpi, 96); }
+
+/* ------------------------------------------------------------------ */
+/* Tray icon                                                           */
+/* ------------------------------------------------------------------ */
+
+static void tray_data(NOTIFYICONDATAW *n)
+{
+    memset(n, 0, sizeof *n);
+    n->cbSize = sizeof *n;
+    n->hWnd = g_hwnd;
+    n->uID = TRAY_ID;
+}
+
+static void tray_add(void)
+{
+    NOTIFYICONDATAW n;
+    tray_data(&n);
+    n.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    n.uCallbackMessage = WM_APP_TRAY;
+    n.hIcon = (HICON)GetClassLongPtrW(g_hwnd, GCLP_HICONSM);
+    if (!n.hIcon) n.hIcon = LoadIconW(NULL, IDI_APPLICATION);
+    wcscpy(n.szTip, g_tip);
+    if (Shell_NotifyIconW(NIM_ADD, &n)) g_in_tray = 1;
+}
+
+static void tray_remove(void)
+{
+    if (!g_in_tray) return;
+    NOTIFYICONDATAW n;
+    tray_data(&n);
+    Shell_NotifyIconW(NIM_DELETE, &n);
+    g_in_tray = 0;
+}
+
+/* Tooltip text: "Title - Artist", truncated to fit. */
+static void tray_tip(const WCHAR *s)
+{
+    wcsncpy(g_tip, s, 127);
+    g_tip[127] = 0;
+    if (!g_in_tray) return;
+    NOTIFYICONDATAW n;
+    tray_data(&n);
+    n.uFlags = NIF_TIP;
+    wcscpy(n.szTip, g_tip);
+    Shell_NotifyIconW(NIM_MODIFY, &n);
+}
+
+static void to_tray(void)
+{
+    tray_add();
+    if (g_in_tray) ShowWindow(g_hwnd, SW_HIDE);   /* no tray (no Explorer): stay minimized */
+}
+
+static void from_tray(void)
+{
+    ShowWindow(g_hwnd, SW_RESTORE);     /* back to normal or maximized, as it was */
+    SetForegroundWindow(g_hwnd);
+    tray_remove();
+}
+
+static void tray_menu(void)
+{
+    PlayerState s;
+    player_get(&s);
+    HMENU m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING, IDM_RESTORE, L"&Show " APP_NAME);
+    AppendMenuW(m, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(m, MF_STRING, IDM_PLAYPAUSE, g_cur_id[0] && s.state == PS_PLAYING ? L"&Pause" : L"&Play");
+    AppendMenuW(m, MF_STRING, IDM_NEXT, L"&Next track");
+    AppendMenuW(m, MF_STRING, IDM_PREV, L"P&revious track");
+    AppendMenuW(m, MF_STRING | (g_cur_id[0] ? 0 : MF_GRAYED), IDM_STOP, L"&Stop");
+    AppendMenuW(m, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(m, MF_STRING, IDM_EXIT, L"E&xit");
+    SetMenuDefaultItem(m, IDM_RESTORE, FALSE);
+    POINT pt;
+    GetCursorPos(&pt);
+    /* Needed so the menu closes when the user clicks elsewhere (KB135788). */
+    SetForegroundWindow(g_hwnd);
+    TrackPopupMenu(m, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, pt.x, pt.y, 0, g_hwnd, NULL);
+    PostMessageW(g_hwnd, WM_NULL, 0, 0);
+    DestroyMenu(m);
+}
 
 /* ------------------------------------------------------------------ */
 /* Settings                                                            */
@@ -205,14 +294,17 @@ static void report(int kind, int paused, const char *event)
 
 static void update_title(void)
 {
-    WCHAR t[600];
+    WCHAR t[600], tip[600];
     if (g_cur_id[0] && g_qi >= 0 && g_qi < g_q.n) {
         Trk *k = &g_q.v[g_qi];
-        if (k->artist && k->artist[0]) _snwprintf(t, 600, L"%ls - %ls - " APP_NAME, k->title, k->artist);
-        else _snwprintf(t, 600, L"%ls - " APP_NAME, k->title);
+        if (k->artist && k->artist[0]) _snwprintf(tip, 600, L"%ls - %ls", k->title, k->artist);
+        else _snwprintf(tip, 600, L"%ls", k->title);
+        tip[599] = 0;
+        _snwprintf(t, 600, L"%ls - " APP_NAME, tip);
         t[599] = 0;
-    } else wcscpy(t, APP_NAME);
+    } else { wcscpy(t, APP_NAME); wcscpy(tip, APP_NAME); }
     SetWindowTextW(g_hwnd, t);
+    tray_tip(tip);
 }
 
 static void stop_playback(void)
@@ -224,6 +316,7 @@ static void stop_playback(void)
     SendMessageW(g_seek, TBM_SETPOS, TRUE, 0);
     EnableWindow(g_seek, FALSE);
     update_title();
+    g_last_state = -1;
     InvalidateRect(g_lvtrk, NULL, FALSE);
 }
 
@@ -247,6 +340,7 @@ static void play_index(int i)
     status(1, L"");
     report(REP_START, 0, NULL);
     update_title();
+    g_last_state = -1;      /* new track: refresh the status bar even if still "playing" */
     InvalidateRect(g_lvtrk, NULL, FALSE);
 }
 
@@ -778,6 +872,12 @@ static void command(int id)
     case IDM_LOGIN:     show_login(); break;
     case IDM_LOGOUT:    logout(); break;
     case IDM_EXIT:      PostMessageW(g_hwnd, WM_CLOSE, 0, 0); break;
+    case IDM_RESTORE:   from_tray(); break;
+    case IDM_TRAY:
+        g_min_to_tray = !g_min_to_tray;
+        CheckMenuItem(GetMenu(g_hwnd), IDM_TRAY, g_min_to_tray ? MF_CHECKED : MF_UNCHECKED);
+        ini_seti(L"Window", L"MinimizeToTray", g_min_to_tray);
+        break;
     case IDM_ABOUT:
         MessageBoxW(g_hwnd, APP_NAME L" " TEXT(APP_VERSION) L"\n\nA small Jellyfin music player.\n"
                     L"Audio decoding by miniaudio (miniaud.io).", L"About", MB_OK | MB_ICONINFORMATION);
@@ -795,7 +895,9 @@ static void save_window(void)
     ini_seti(L"Window", L"Y", r->top);
     ini_seti(L"Window", L"W", r->right - r->left);
     ini_seti(L"Window", L"H", r->bottom - r->top);
-    ini_seti(L"Window", L"Max", wp.showCmd == SW_SHOWMAXIMIZED);
+    /* Minimized (or in the tray) from maximized still counts as maximized. */
+    ini_seti(L"Window", L"Max", wp.showCmd == SW_SHOWMAXIMIZED ||
+             (wp.showCmd != SW_SHOWNORMAL && (wp.flags & WPF_RESTORETOMAXIMIZED)));
     ini_seti(L"Player", L"Volume", vol_pct());
 }
 
@@ -815,7 +917,15 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         RegisterHotKey(h, HK_STOP, 0, VK_MEDIA_STOP);
         return 0;
     case WM_SIZE:
+        if (wp == SIZE_MINIMIZED) {
+            if (g_min_to_tray) to_tray();
+            return 0;
+        }
         layout();
+        return 0;
+    case WM_APP_TRAY:
+        if (lp == WM_LBUTTONUP || lp == WM_LBUTTONDBLCLK) from_tray();
+        else if (lp == WM_RBUTTONUP) tray_menu();
         return 0;
     case WM_GETMINMAXINFO:
         ((MINMAXINFO *)lp)->ptMinTrackSize.x = S(640);
@@ -866,11 +976,17 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         DestroyWindow(h);
         return 0;
     case WM_DESTROY:
+        tray_remove();
         KillTimer(h, TIMER_ID);
         if (g_cur_id[0]) report(REP_STOP, 0, NULL);
         player_stop();
         g_cur_id[0] = 0;
         PostQuitMessage(0);
+        return 0;
+    }
+    if (m == g_taskbar_created && g_taskbar_created && g_in_tray) {
+        g_in_tray = 0;      /* the old icon died with Explorer */
+        tray_add();
         return 0;
     }
     return DefWindowProcW(h, m, wp, lp);
@@ -912,6 +1028,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     wc.lpszClassName = L"jfmusic";
     RegisterClassExW(&wc);
 
+    g_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
+    g_min_to_tray = GetPrivateProfileIntW(L"Window", L"MinimizeToTray", 1, g_ini) != 0;
     int x = GetPrivateProfileIntW(L"Window", L"X", CW_USEDEFAULT, g_ini);
     int y = GetPrivateProfileIntW(L"Window", L"Y", CW_USEDEFAULT, g_ini);
     int w = GetPrivateProfileIntW(L"Window", L"W", S(960), g_ini);
@@ -919,6 +1037,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     HWND hwnd = CreateWindowExW(0, L"jfmusic", APP_NAME, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                                 x, y, w, hh, NULL, NULL, inst, NULL);
     if (!hwnd) return 1;
+    CheckMenuItem(GetMenu(hwnd), IDM_TRAY, g_min_to_tray ? MF_CHECKED : MF_UNCHECKED);
     /* Don't restore a position that is now off-screen (monitor unplugged). */
     if (x != CW_USEDEFAULT) {
         RECT r = { x, y, x + w, y + hh };
